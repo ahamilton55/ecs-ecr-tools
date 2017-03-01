@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  InstanceDrainFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: 'instance_drain'
+      Description: 'Drains tasks from ECS container instances before termination'
+      Handler: 'instance_drain.handler'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      #Environment:
+      #  Variables:
+      #    DRYRUN: true
+      Code:
+        S3Bucket: ''
+        S3Key: 'instance_drain.zip'
+      Runtime: 'python2.7'
+      Timeout: 300     # Uses the maximum run time of 5 minutes
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: LoggingAccess
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:*
+            Resource: arn:aws:logs:*:*:*
+      - PolicyName: LambdaFunctionAccess
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - ecs:DeregisterContainerInstance
+            - ecs:DescribeClusters
+            - ecs:DescribeContainerInstances
+            - ecs:DescribeServices
+            - ecs:DescribeTasks
+            - ecs:ListClusters
+            - ecs:ListContainerInstances
+            - ecs:ListServices
+            - ecs:ListTasks
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - autoscaling:CompleteLifecycleAction
+            - elasticloadbalancing:DescribeInstanceHealth
+            - elasticloadbalancing:DescribeTargetHealth
+            - elasticloadbalancing:DescribeLoadBalancerAttributes
+            - elasticloadbalancing:DescribeTargetGroupAttributes
+            Resource: '*'
+  # When adding clusters, replicate the next two groups
+  # You need to change the SourceArn and TopicArn values
+  #
+  # One Lambda job can watch multiple SNS topics since a separte job will be
+  # launched for each event
+  EcsStageLambdaExecutionForSns:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt InstanceDrainFunction.Arn
+      Principal: "sns.amazonaws.com"
+      SourceArn: #ARN for SNS Topic of ECS cluster AutoScaling actions
+  EcsStageSnsSubscription:
+    Type: "AWS::SNS::Subscription"
+    Properties:
+      Endpoint: !GetAtt InstanceDrainFunction.Arn
+      Protocol: lambda
+      TopicArn: #ARN for SNS Topic of ECS cluster AutoScaling actions
+  # END
+Outputs:
+  InstanceDrainArn:
+    Description: ARN for the Instance Drain Lambda function
+    Value:
+      Fn::GetAtt:
+        - "InstanceDrainFunction"
+        - "Arn"
+    Export:
+      Name: !Sub "${AWS::StackName}-Arn"
